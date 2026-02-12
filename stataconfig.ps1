@@ -1,10 +1,19 @@
-# StataConfig-GUI.ps1 - Mini GUI für Stata Konfiguration
+# StataConfig-GUI.ps1 - Umlaute-fähig für PowerShell 5.1
+# WICHTIG: Als UTF-8 mit BOM speichern!
+
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName WindowsBase
 
-# XAML für einfache GUI
+# UTF8-Encoding explizit setzen
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# XAML mit UTF8-kompatiblen Umlauten (xml:space="preserve")
 $XAML = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+<Window xml:lang="de-DE" 
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         Title="Stata Konfiguration (User)" Height="380" Width="500"
         WindowStartupLocation="CenterScreen" ShowInTaskbar="True"
         ResizeMode="NoResize">
@@ -23,11 +32,11 @@ $XAML = @"
             <StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="5">
                     <Label Content="Temp-Ordner (STATATMP):" Width="140"/>
-                    <TextBox Name="txtTempPath" Text="{Binding TempPath}" Width="300" Margin="5,0"/>
+                    <TextBox Name="txtTempPath" Width="300" Margin="5,0"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="5">
                     <Label Content="Arbeitsverzeichnis:" Width="140"/>
-                    <TextBox Name="txtWorkDir" Text="{Binding WorkDir}" Width="300" Margin="5,0"/>
+                    <TextBox Name="txtWorkDir" Width="300" Margin="5,0"/>
                 </StackPanel>
             </StackPanel>
         </GroupBox>
@@ -40,7 +49,7 @@ $XAML = @"
             <Button Name="btnConfig" Content="Konfigurieren" Width="100" Height="35" 
                     Margin="10,0" Cursor="Hand"/>
             <Button Name="btnTest" Content="Test öffnen" Width="100" Height="35" 
-                    Margin="10,0" Cursor="Hand"/>
+                    Margin="10,0" Cursor="Hand" IsEnabled="False"/>
             <Button Name="btnClose" Content="Schließen" Width="100" Height="35" 
                     Margin="10,0" Cursor="Hand"/>
         </StackPanel>
@@ -48,8 +57,10 @@ $XAML = @"
 </Window>
 "@
 
-# Fenster laden
-$Reader = (New-Object System.Xml.XmlNodeReader ([xml]$XAML))
+# Fenster laden mit UTF8
+[xml]$XamlReader = $XAML
+$Reader = (New-Object System.Xml.XmlNodeReader $XamlReader)
+$Reader.XmlResolver = $null  # Keine externen DTDs
 $Window = [Windows.Markup.XamlReader]::Load($Reader)
 
 # Controls binden
@@ -60,7 +71,7 @@ $btnConfig = $Window.FindName("btnConfig")
 $btnTest = $Window.FindName("btnTest")
 $btnClose = $Window.FindName("btnClose")
 
-# Standardwerte setzen
+# Standardwerte setzen (UTF8-kompatibel)
 $txtTempPath.Text = "$env:USERPROFILE\StataTemp"
 $txtWorkDir.Text = "$env:USERPROFILE\Documents\Stata"
 
@@ -72,44 +83,54 @@ function Configure-Stata {
     
     try {
         # Ordner erstellen
-        if (!(Test-Path $TempPath)) { New-Item -ItemType Directory -Path $TempPath -Force | Out-Null }
-        if (!(Test-Path $WorkDir)) { New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null }
+        if (!(Test-Path $TempPath)) { 
+            New-Item -ItemType Directory -Path $TempPath -Force | Out-Null 
+        }
+        if (!(Test-Path $WorkDir)) { 
+            New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null 
+        }
         
-        # STATATMP User-Variable
+        # STATATMP User-Variable (UTF8)
         [Environment]::SetEnvironmentVariable("STATATMP", $TempPath, "User")
         $env:STATATMP = $TempPath
         
-        # profile.do erstellen
+        # profile.do erstellen (UTF8)
         $profileDo = @"
 cd "$WorkDir"
 display "✓ Working Directory: " c(pwd)
-display "✓ STATATMP: `"`$STATATMP`""
+display "✓ STATATMP: `"$STATATMP`"
+display "Stata User-Konfiguration geladen!"
 "@
         Set-Content -Path "$WorkDir\profile.do" -Value $profileDo -Encoding UTF8
         
-        # Test-Datei
+        # Test-Datei (UTF8)
         $testDo = @"
 sysuse auto, clear
-summarize price mpg
-save "test.dta", replace
-display "✅ Stata voll funktionsfähig!"
+describe
+summarize price mpg weight
+save "test_auto.dta", replace
+tempfile tempcheck
+display "✅ Dataset gespeichert: test_auto.dta"
+display "✅ Temp-Pfad OK: " r(fn)
+display "🎉 Stata voll funktionsfähig!"
 "@
         Set-Content -Path "$WorkDir\test.do" -Value $testDo -Encoding UTF8
         
-        $txtStatus.Text = "✅ Konfiguration erfolgreich!`nSTATATMP: $TempPath`nWorkingDir: $WorkDir`nDateien: profile.do, test.do erstellt`nStata neustarten!"
+        $txtStatus.Text = "✅ Konfiguration erfolgreich!`nSTATATMP: $TempPath`nWorkingDir: $WorkDir`nDateien: profile.do, test.do erstellt`n💡 Stata neustarten!"
         $script:ConfigDone = $true
         $btnTest.IsEnabled = $true
         
     } catch {
         $txtStatus.Text = "❌ Fehler: $($_.Exception.Message)"
+        $btnConfig.IsEnabled = $true
     }
 }
 
 # Event Handler
 $btnConfig.Add_Click({
     $btnConfig.IsEnabled = $false
+    $txtStatus.Text = "🔄 Konfiguriere..."
     Configure-Stata
-    $btnConfig.IsEnabled = $true
 })
 
 $btnTest.Add_Click({
